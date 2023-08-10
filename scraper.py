@@ -200,6 +200,7 @@ class HomeDepotScraper(RetailerReviewScraper):
                     'RETAILER': self.retailer,
                     'PRODUCT': self.product,
                     'RATING': rating,
+                    'POST_DATE': '',
                     'REVIEWER_NAME': author,
                     'TITLE': title,
                     'CONTENT': body
@@ -217,20 +218,31 @@ class HomeDepotScraper(RetailerReviewScraper):
                 self.get_data()
             else:
                 break
-        df1 = pd.DataFrame(post_dates)
-        df2 = pd.DataFrame(results)  # Use for Star Rating Counts
 
-        # Dropping Unnecessary Rows
-        df_with_reviews = df2[~df2.CONTENT.str.contains('Rating provided by a verified purchaser', na=False)]
-        df_with_reviews.dropna(subset=['CONTENT'], inplace=True)
+        # append post dates to results where reviewer name and title match
+        for result in results:
+            for date in post_dates:
+                if result['REVIEWER_NAME'] == date['REVIEWER_NAME'] and result['TITLE'] == date['TITLE']:
+                    result['POST_DATE'] = date['POST_DATE']
 
-        df = df_with_reviews.merge(df1, how='inner', on=['REVIEWER_NAME', 'TITLE'])
-        column_move = df.pop('POST_DATE')
-        df.insert(3, 'POST_DATE', column_move)
 
-        df_rating = df2['RATING']
 
-        return df, df_rating
+        return results
+
+        # df1 = pd.DataFrame(post_dates)
+        # df2 = pd.DataFrame(results)  # Use for Star Rating Counts
+        #
+        # # Dropping Unnecessary Rows
+        # df_with_reviews = df2[~df2.CONTENT.str.contains('Rating provided by a verified purchaser', na=False)]
+        # df_with_reviews.dropna(subset=['CONTENT'], inplace=True)
+        #
+        # df = df_with_reviews.merge(df1, how='inner', on=['REVIEWER_NAME', 'TITLE'])
+        # column_move = df.pop('POST_DATE')
+        # df.insert(3, 'POST_DATE', column_move)
+        #
+        # df_rating = df2['RATING']
+
+        # return df, df_rating
 
 url = 'https://www.homedepot.com/p/reviews/LG-CordZero-All-in-One-Cordless-Stick-Vacuum-Cleaner-A939KBGS/319148737/'
 product_name='LG A939KBGS'
