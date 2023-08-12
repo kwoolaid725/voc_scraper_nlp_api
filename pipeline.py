@@ -1,11 +1,22 @@
 import pandas as pd
 import json
 import openpyxl
-
 from scraper import AmazonScraper, BestBuyScraper, HomeDepotScraper
-
 # today's date
 from datetime import date
+import pyspark
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, regexp_replace
+from pyspark.sql.functions import filter, col, first, round, concat, lit
+from pyspark.ml.feature import Tokenizer, StopWordsRemover, HashingTF, IDF
+
+
+import nltk
+import re
+import string
+
+
+
 today = date.today()
 
 class UserInput:
@@ -21,7 +32,6 @@ class UserInput:
 
 
 # merge dictionaries
-
 # append dictionaries to list
 list_of_inputs = []
 class GroupbyRetail(UserInput):
@@ -37,10 +47,10 @@ class GroupbyRetail(UserInput):
         list_of_inputs.append(self.passed_dict)
 
 
-# a = Pipeline('amazon', 'LG CordZero Cordless', 'https://www.amazon.com/LG-CordZero-Cordless-Lightweight-Warranty/product-reviews/B0BZQT1235/ref=cm_cr_getr_d_paging_btm_next_10?ie=UTF8&reviewerType=all_reviews')()
-# b = GroupbyRetail('bestbuy', 'LG CordZero', 'https://www.bestbuy.com/site/reviews/lg-cordzero-cordless-stick-vacuum-with-auto-empty-and-kompressor-sand-beige/6483115?variant=A&page=1')()
+a = GroupbyRetail('amazon', 'LG A939KBGS', 'https://www.amazon.com/LG-CordZero-Cordless-Lightweight-Warranty/product-reviews/B0BZQT1235/ref=cm_cr_getr_d_paging_btm_next_10?ie=UTF8&reviewerType=all_reviews')()
+b = GroupbyRetail('bestbuy', 'LG A939KBGS', 'https://www.bestbuy.com/site/reviews/lg-cordzero-cordless-stick-vacuum-with-auto-empty-and-kompressor-sand-beige/6483115?variant=A&page=1')()
 # d = GroupbyRetail('homedepot', 'Dyson V10', 'https://www.homedepot.com/p/reviews/Dyson-V10-Animal-Cordless-Stick-Vacuum-394429-01/313126189/')()
-c = GroupbyRetail('homedepot', 'LG CordZero', 'https://www.homedepot.com/p/reviews/LG-CordZero-All-in-One-Cordless-Stick-Vacuum-Cleaner-A939KBGS/319148737/')()
+c = GroupbyRetail('homedepot', 'LG A939KBGS', 'https://www.homedepot.com/p/reviews/LG-CordZero-All-in-One-Cordless-Stick-Vacuum-Cleaner-A939KBGS/319148737/')()
 
 
 class RunScrapers:
@@ -104,11 +114,35 @@ class RunScrapers:
         reviews_df = pd.DataFrame(reviews)
         return reviews_df
 
-    def preprocess(self):
-        reviews_df = pd.DataFrame(self.run())
-        reviews_df = reviews_df.drop_duplicates(subset=['REVIEWER_NAME', 'TITLE', 'CONTENT'], keep='first')
-        reviews_df = reviews_df.dropna(subset=['CONTENT'])
-        return reviews_df
+
+# ps = nltk.PorterStemmer()
+# stopwords = nltk.corpus.stopwords.words('english')
+# spark = SparkSession.builder.appName('reviews').getOrCreate()
+
+# class Preprocess:
+#
+#     def __init__(self, reviews_df):
+#         # to PySpark DataFrame
+#         self.prepocessed_df = spark.createDataFrame(reviews_df)
+#
+#     # 1 - Removing "[This review was collected as part of a promotion."] from Home Depot reviews
+#         self.prepocessed_df = self.prepocessed_df.withColumn('CONTENT', regexp_replace('CONTENT', 'This review was collected as part of a promotion.', ''))
+#     # 2 - Dropping empty reviews in content column
+#         self.prepocessed_df = self.prepocessed_df.filter(self.prepocessed_df.CONTENT != '')
+#     # 3 - Dropping duplicate reviews
+#         self.prepocessed_df = self.prepocessed_df.dropDuplicates(subset=['REVIEWER_NAME', 'TITLE', 'CONTENT'])
+#     # 4 - Combine title and content columns
+#         self.prepocessed_df = self.prepocessed_df.withColumn('REVIEW', concat(col('TITLE'), lit(' '), col('CONTENT')))
+
+    # def clean_text(self):
+    #     # 5 - Tokenize text
+    #     tokenizer = Tokenizer(inputCol='REVIEW', outputCol='tokens')
+    #
+    #     text = ''.join([word for word in text if word not in string.punctuation])
+    #     tokens = re.split('\W+', text)
+    #     text = [word for word in tokens if word not in stopwords]
+    #
+    #
 
 
 class Export:
@@ -117,14 +151,17 @@ class Export:
 
     def to_json(self):
         reviews_json = self.reviews_df.to_json(orient='records')
-        with open(f'(RAW)RetailsReviews_{today}.json', 'w') as f:
+        with open(f'RetailsReviews_{today}.json', 'w') as f:
             f.write(reviews_json)
         return print('JSON file created')
 
     def to_excel(self):
-        self.reviews_df.to_excel(f'(RAW)RetailsReviews_{today}.xlsx', index=False)
+        self.reviews_df.to_excel(f'RetailsReviews_{today}.xlsx', index=False)
         return print('Excel file created')
 
+    def to_parquet(self):
+        self.reviews_df.write.parquet(f'RetailsReviews_{today}.parquet')
+        return print('Parquet file created')
 
 
 if __name__ == "__main__":

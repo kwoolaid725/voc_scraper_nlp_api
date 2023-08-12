@@ -6,9 +6,6 @@ import json, os
 
 from zenrows import ZenRowsClient
 
-
-
-
 class RetailerReviewScraper:
     def __init__(self, url, product):
         self.url = url
@@ -22,18 +19,18 @@ class AmazonScraper(RetailerReviewScraper):
         self.soup = None
 
     def get_data(self):
-        # HEADERS = {
-        #     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36",
-        #     'Accept-Language': 'en-US, en;q=0.5'
-        # }
+        HEADERS = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36",
+            'Accept-Language': 'en-US, en;q=0.5'
+        }
         # payload = {'api_key': '0a53d12b168b28c41638451a545f7495', 'url': self.url, 'keep_headers': 'true'}
-        # payload = {'api_key': 'c52bb0af37f8185b7950a05e932725fb', 'url': self.url, 'keep_headers': 'true'}
-        client = ZenRowsClient("04dabc49992991eedc79158aad6e8e7855e83379")
+        payload = {'api_key': 'c52bb0af37f8185b7950a05e932725fb', 'url': self.url, 'keep_headers': 'true'}
+        # client = ZenRowsClient("04dabc49992991eedc79158aad6e8e7855e83379")
 
 
         for i in range(5):
-            # r = requests.get('http://api.scraperapi.com', params=payload, headers=HEADERS, timeout=60)
-            r = client.get(self.url, timeout=60)
+            r = requests.get('http://api.scraperapi.com', params=payload, headers=HEADERS, timeout=60)
+            # r = client.get(self.url, timeout=60)
             print(self.url)
             print("status code received:", r.status_code)
             if r.status_code == 200:
