@@ -1,4 +1,0 @@
-pip freeze > requirements.txt
-deactivate
-mv env env_old
-
