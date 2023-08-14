@@ -6,8 +6,9 @@ from scraper import AmazonScraper, BestBuyScraper, HomeDepotScraper
 from datetime import date
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, regexp_replace
-from pyspark.sql.functions import filter, col, first, round, concat, lit, when, to_date
+from pyspark.sql.functions import col, regexp_replace, udf, lit
+from pyspark.sql.types import StringType, ArrayType
+
 import ssl
 
 import nltk
@@ -26,11 +27,49 @@ import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 
 from rake_nltk import Metric, Rake
+from pke.unsupervised import YAKE
+import yake
+
+from yake.highlight import TextHighlighter
+from IPython.display import HTML
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+
+
 
 
 
 
 today = date.today()
+
+
+model_name = f'cardiffnlp/twitter-roberta-base-sentiment'
+model = AutoModelForSequenceClassification.from_pretrained(model_name)
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+def polarity_scores_roberta(review):
+
+
+    encoded_text = tokenizer(review, padding=True, truncation=True, max_length=512, return_tensors='pt')
+
+    output = model(**encoded_text)
+
+    scores = output[0][0].detach().numpy()
+    scores = softmax(scores)
+
+    scores_dict = {
+        'NEG': scores[0],
+        'NEU': scores[1],
+        'POS': scores[2]
+    }
+    return scores_dict
+
+
+
+
+
+
 
 class UserInput:
     def __init__(self, retail, product_name, url):
@@ -129,9 +168,7 @@ class RunScrapers:
 
 
 class NlpPipeline:
-    from pyspark.sql import SparkSession
-    from pyspark.sql.functions import col, regexp_replace
-    from pyspark.sql.functions import filter, col, first, round, concat, lit, when, to_date
+
     def __init__(self, df_reviews):
         # group by retail from list_of_inputs
         self.df_reviews = df_reviews
@@ -169,6 +206,8 @@ class NlpPipeline:
         print(f"Previous count: {new_count}")
         new_count = sdf_preprocessed.count()
         print(f"New count after drooping empty reviews: {new_count}")
+        sdf_preprocessed = sdf_preprocessed.withColumn('REVIEW', regexp_replace('REVIEW', 'NaN' , ''))
+
 
         """ 
                 5 - 'POST_DATE' column contains different formats from each retailer
@@ -179,6 +218,7 @@ class NlpPipeline:
                 Best Buy: MMM dd, yyyy hh:mm a
                 The Home Depot: MM dd, yyyy
         """
+
 
         # Set the legacy time parser policy
         spark.conf.set("spark.sql.legacy.timeParserPolicy", "LEGACY")
@@ -204,14 +244,14 @@ class NlpPipeline:
 
         spark.stop()
         self.preprocessed = True
-        return self.df
+        return self
 
 
     def process_words(self):
         if not self.preprocessed:
             raise ValueError("Preprocessing has not been done yet.")
 
-        df = self.df.drop(columns=['TITLE', 'CONTENT'])
+        df = self.df.drop(columns=['CONTENT'])
         df.insert(0, 'ID', range(0, len(df)))
 
         try:
@@ -221,7 +261,7 @@ class NlpPipeline:
         else:
             ssl._create_default_https_context = _create_unverified_https_context
 
-        nltk.download()
+        nltk.download(quiet=True)
         wn = nltk.WordNetLemmatizer()
         stopwords = nltk.corpus.stopwords.words('english')
 
@@ -238,8 +278,8 @@ class NlpPipeline:
             text = [wn.lemmatize(word) for word in tokenized_text]
             return text
 
-        df['lemmatized'] = df['review_clean'].apply(lambda x: lemmatizing(x))
-        df['review_clean'] = df.review_clean.apply(' '.join)
+        df['LEMMATIZED'] = df['REVIEW_CLEAN'].apply(lambda x: lemmatizing(x))
+        df['REVIEW_CLEAN'] = df.REVIEW_CLEAN.apply(' '.join)
 
         # N-grams
 
@@ -247,33 +287,14 @@ class NlpPipeline:
             n_grams = ngrams(nltk.word_tokenize(data), num)
             return [' '.join(grams) for grams in n_grams]
 
-        df['ngram2'] = df['review_clean'].apply(lambda x: extract_ngrams(x, 2))
+        df['NGRAM2'] = df['REVIEW_CLEAN'].apply(lambda x: extract_ngrams(x, 2))
         self.df = df
         self.tokenized = True
-        return df
+        return self
 
     def sentiment_analysis(self):
-        if not self.preprocessed & self.tokenized:
+        if not (self.preprocessed & self.tokenized):
             raise ValueError("Preprocessing and Tokenizing have not been done yet.")
-        def polarity_scores_roberta(review):
-            model_name = f'cardiffnlp/twitter-roberta-base-sentiment'
-
-            model = AutoModelForSequenceClassification.from_pretrained(model_name)
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-            encoded_text = tokenizer(review, padding=True, truncation=True, max_length=512, return_tensors='pt')
-
-            output = model(**encoded_text)
-
-            scores = output[0][0].detach().numpy()
-            scores = softmax(scores)
-
-            scores_dict = {
-                'negative': scores[0],
-                'neutral': scores[1],
-                'positive': scores[2]
-            }
-            return scores_dict
 
         res = {}
         for i, row in tqdm(self.df.iterrows(), total=len(self.df)):
@@ -282,15 +303,17 @@ class NlpPipeline:
                 myid = row['ID']
                 roberta_result = polarity_scores_roberta(text)
                 res[myid] = {**roberta_result}
+
             except RuntimeError:
                 print(f'Broke for id {myid}')
 
+        print(res)
         df_scores = pd.DataFrame(res).T
         df_scores = df_scores.reset_index().rename(columns={'index': 'ID'})
         df_merged = self.df.merge(df_scores, how='left')
 
         sns.pairplot(data=df_merged,
-                     vars=['negative', 'neutral', 'positive'],
+                     vars=['NEG', 'NEU', 'POS'],
                      hue='RATING',
                      palette='tab10'
                      )
@@ -298,25 +321,25 @@ class NlpPipeline:
         fig.savefig("scores_seaborn.png")
         self.df = df_merged
         self.sentiment_done = True
-        return df_merged
+        return self
 
 
     def word_count(self):
         if not self.sentiment_done:
             raise ValueError("Sentiment Analysis has not been done yet.")
         df = self.df
-        df['positivity'] = np.where((df['RATING'] >= 4) & (df['positive'] > 0.5), 1, 0)
-        df['positivity'] = np.where((df['RATING'] <= 2) & (df['negative'] > 0.5), -1,
-                                              df['positivity'])
-        df['lemmatized_s'] = [', '.join(map(str, l)) for l in df['lemmatized']]
-        df['ngram2_s'] = [', '.join(map(str, l)) for l in df['ngram2']]
+        df['POSITIVITY'] = np.where((df['RATING'] >= 4) & (df['POS'] > 0.5), 1, 0)
+        df['POSITIVITY'] = np.where((df['RATING'] <= 2) & (df['NEG'] > 0.5), -1,
+                                              df['POSITIVITY'])
+        df['LEMMATIZED_S'] = [', '.join(map(str, l)) for l in df['LEMMATIZED']]
+        df['NGRAM2_S'] = [', '.join(map(str, l)) for l in df['NGRAM2']]
 
-        d = df.groupby(df['positivity']).agg({'lemmatized_s': lambda x: ', '.join(x),
-                                                                  'ngram2_s': lambda x: ', '.join(x)})
+        d = df.groupby(df['POSITIVITY']).agg({'LEMMATIZED_S': lambda x: ', '.join(x),
+                                                                  'NGRAM2_S': lambda x: ', '.join(x)})
 
-        lem_pos = d['lemmatized_s'][1]
-        lem_neu = d['lemmatized_s'][0]
-        lem_neg = d['lemmatized_s'][-1]
+        lem_pos = d['LEMMATIZED_S'][1]
+        lem_neu = d['LEMMATIZED_S'][0]
+        lem_neg = d['LEMMATIZED_S'][-1]
 
         tags_pos = lem_pos.split(', ')  # Positivity [1]
         tags_neu = lem_neu.split(', ')  # Positivity [0]
@@ -340,9 +363,9 @@ class NlpPipeline:
         lemmatized_count = lemmatized_count.sort_values(by='POS(1)', ascending=False)
         lemmatized_count.name = 'Word Count by Sentiment'
 
-        ngram2_pos = d['ngram2_s'][1]
-        ngram2_neu = d['ngram2_s'][0]
-        ngram2_neg = d['ngram2_s'][-1]
+        ngram2_pos = d['NGRAM2_S'][1]
+        ngram2_neu = d['NGRAM2_S'][0]
+        ngram2_neg = d['NGRAM2_S'][-1]
 
         tags_bi_pos = ngram2_pos.split(', ')  # Positive Bi-gram
         tags_bi_neu = ngram2_neu.split(', ')  # Neutral Bi-gram
@@ -388,7 +411,7 @@ class NlpPipeline:
         plt.savefig("wordcloud_bi_pos.png", bbox_inches='tight')  # Save the figure
 
 
-        wordcloud_bi_neg = WordCloud(stopwords=stopwords_c, width=1000, height=500).generate_from_frequencies(
+        wordcloud_bi_neg = WordCloud(stopwords=stopwords_c, width=1000, height=500, colormap='RdPu').generate_from_frequencies(
             res_bi_neg)
         plt.figure(figsize=(15, 8))
         plt.imshow(wordcloud_bi_neg)
@@ -396,17 +419,18 @@ class NlpPipeline:
         plt.savefig("wordcloud_bi_neg.png", bbox_inches='tight')
 
         self.df = df
-        return df, wordcloud_pos, wordcloud_neg, wordcloud_bi_pos, wordcloud_bi_neg
+        return self
 
 
     def keyword_extraction(self):
+
 
         if not self.sentiment_done:
             raise ValueError("Sentiment Analysis has not been done yet.")
         df = self.df
         # Keywords Extraction
 
-        df['REVIEW'] = df['REVIEW'].apply(
+        df['REVIEW_P'] = df['REVIEW'].apply(
             lambda x: x.replace(":   ", ":").replace(":  ", ":").replace(": ", ":").replace(":\n\n", ": ").
             replace(":\n",": ").replace("\t", "").replace("\n-", "").replace("\n ", "\n").replace("NaN", ""))
 
@@ -417,32 +441,37 @@ class NlpPipeline:
             para_list.extend(paragraphs)
             return para_list
 
-        df['PARAGRAPHS'] = df['REVIEW'].apply(lambda x: separate_paragraphs(x))
+        df['PARAGRAPHS'] = df['REVIEW_P'].apply(lambda x: separate_paragraphs(x))
+        df = df.drop(columns=['REVIEW_P'])
 
         # Drop df columns: REVIEW
-        df_ = df.drop(columns=['RETAILER', 'PRODUCT', 'POST_DATE', 'REVIEWER_NAME', 'TITLE', 'CONTENT', 'REVIEW'])
+        # df = df.drop(columns=['RETAILER', 'PRODUCT', 'POST_DATE', 'REVIEWER_NAME', 'TITLE',  'REVIEW'])
         # explode the PARAGRAPHS Column
         df = df.explode('PARAGRAPHS')
         df = df.reset_index(drop=True)
         # remove empty rows from PARAGRAPHS
-        df_paragraphs = df[df['PARAGRAPHS'] != '']
-
-        df_paragraphs.insert(1, 'P_ID', range(0 + len(df_paragraphs)))
-
+        df = df[df['PARAGRAPHS'] != '']
+        df.insert(1, 'P_ID', range(0 + len(df)))
+        self.df = df
+        df_paragraphs = df[['P_ID', 'PARAGRAPHS']]
         res = {}
         for i, row in tqdm(df_paragraphs.iterrows(), total=len(df_paragraphs)):
             try:
                 text = row['PARAGRAPHS']
                 myid = row['P_ID']
                 # vader_results = sia.polarity_scores(text)
-                roberta_result = NlpPipeline.sentiment_analysis.polarity_scores_roberta(text)
+                roberta_result = polarity_scores_roberta(text)
+                print(roberta_result)
+                roberta_result = {k + '_P': v for k, v in roberta_result.items()}
+                print(roberta_result)
                 res[myid] = {**roberta_result}
+
             except RuntimeError:
                 print(f'Broke for id {myid}')
-
+        print(res)
         df_para_sentiment = pd.DataFrame(res).T
         df_para_sentiment = df_para_sentiment.reset_index().rename(columns={'index': 'P_ID'})
-        df_keywords = df_para_sentiment.merge(df_paragraphs, how='left')
+        df_keywords = self.df.merge(df_para_sentiment, how='left', on='P_ID')
 
 
         for i in range(0, len(df_keywords['PARAGRAPHS'])):
@@ -450,11 +479,9 @@ class NlpPipeline:
                 str.maketrans('', '', string.punctuation))
             df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].replace('\n', '. ')
             df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].lower()
-            # keywords_df['PARAGRAPHS'][i] = re.sub("['\"]","",keywords_df['PARAGRAPHS'][i])
             for j in re.findall('"([^"]*)"', df_keywords['PARAGRAPHS'][i]):
                 df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].replace('"{}"'.format(j),
                                                                                     j.replace(' ', '_'))
-
         df_keywords['KEYWORD'] = df_keywords['PARAGRAPHS'].apply(lambda x: word_tokenize(x))
         english_stopwords = stopwords.words('english')
         for i in range(0, len(df_keywords['KEYWORD'])):
@@ -474,7 +501,100 @@ class NlpPipeline:
             keywords.append(keyword)
         df_keywords['KEYWORDS'] = keywords
 
-        return df_keywords
+        extractor = YAKE()
+        keywords_yake_n_1 = []
+        keywords_yake_n_2 = []
+        keywords_yake_th = []
+        keywords_threshold_80 = []
+
+
+
+        # highlight all keywords in the text
+
+        # th = TextHighlighter(max_ngram_size=3)
+        # th = TextHighlighter(max_ngram_size=3, highlight_pre="<span class='highlight' >", highlight_post="</span>")
+        #
+        # css_style = """
+        #           <style>
+        #           .highlight {
+        #               background-color: yellow;
+        #               font-weight: bold;
+        #           }
+        #           </style>
+        #           """
+        # df_keywords['PARAGRAHS_HIGHLIGHTED'] = css_style + '<body>'
+        # print(df_keywords['PARAGRAHS_HIGHLIGHTED'])
+        # for i in range(0, len(df_keywords['PARAGRAPHS'])):
+        #     keywords = custom_kw_extractor.extract_keywords(df_keywords['PARAGRAPHS'][i])
+        #     df_keywords['PARAGRAHS_HIGHLIGHTED'][i] = df_keywords['PARAGRAHS_HIGHLIGHTED'][i] + \
+        #                                               th.highlight(df_keywords['PARAGRAPHS'][i], keywords) + '</body>'
+        #
+        #     keywords = [i[0] for i in keywords]
+        #     keywords_yake_n_2.append(keywords)
+
+        # Define YAKE keyword extraction function
+
+
+        # Define YAKE keyword extraction function
+
+
+
+
+        language = "en"
+        max_ngram_size = 3
+        deduplication_threshold = 0.9
+        deduplication_algo = 'seqm'
+        windowSize = 1
+        numOfKeywords = 5
+
+        kw_extractor = yake.KeywordExtractor(lan=language, n=max_ngram_size,
+                                                    dedupLim=deduplication_threshold,
+                                                    dedupFunc=deduplication_algo, windowsSize=windowSize,
+                                                    top=numOfKeywords, features=None)
+
+        th = TextHighlighter(max_ngram_size=3, highlight_pre="<span class='highlight' >", highlight_post="</span>")
+        df_keywords['HIGHLIGHTED'] = ''
+        css_style = """
+                <style>
+                .highlight {
+                    background-color: yellow;
+                    font-weight: bold;
+                }
+                </style>
+                """
+        htmlcontent = css_style + "<body>"
+        for x in range(0, len(df_keywords['PARAGRAPHS'])):
+            keywords = kw_extractor.extract_keywords(df_keywords['PARAGRAPHS'][x])
+            keywords = [i for i in keywords]
+            print(keywords)
+            keywords_yake_n_1.append(keywords)
+            # flattened_keywords = [item for sublist in keywords for item in sublist]
+            th.highlight(df_keywords['PARAGRAPHS'][x], keywords)
+            df_keywords['HIGHLIGHTED'][x] = htmlcontent + df_keywords['PARAGRAPHS'][x] + '</body>'
+            print(df_keywords['HIGHLIGHTED'][x])
+
+
+        with open('test.html', 'w') as f:
+            f.write(df_keywords)
+
+
+
+        # Apply YAKE extraction to create a new column 'KEYWORDS_YAKE'
+        # df_keywords['KEYWORDS_YAKE'] = df_keywords['PARAGRAPHS'].apply(extract_yake_keywords)
+
+
+        # df_keywords['PARAGRAHS'] = th.highlight(df_keywords['PARAGRAPHS'], keywords_yake_n_1)
+
+
+        # Define CSS style
+
+
+
+
+        self.df = df_keywords
+
+
+        return self
 
     # def yake_keywords(self):
 
@@ -509,12 +629,9 @@ if __name__ == "__main__":
 
    # Create an instance of the NlpPipeline class and preprocess the data
    nlp_pipeline = NlpPipeline(df_reviews)
-   a = nlp_pipeline.preprocess()
+   a = nlp_pipeline.preprocess().process_words().sentiment_analysis().keyword_extraction()
+   # get self.df from the NlpPipeline class
 
-   # Save the preprocessed data to an Excel file
-   a.to_excel('RetailsReviews_preprocessed.xlsx', )
 
-   # Print the preprocessed data
-   print(a)
 
 
