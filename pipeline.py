@@ -67,10 +67,6 @@ def polarity_scores_roberta(review):
 
 
 
-
-
-
-
 class UserInput:
     def __init__(self, retail, product_name, url):
         self.retail = retail
@@ -199,7 +195,7 @@ class NlpPipeline:
         print(f"Number of dropped duplicates: {dropped_count}")
 
         # 3 - Combine title and content columns
-        sdf_preprocessed = sdf_preprocessed.withColumn('REVIEW', concat(col('TITLE'), lit(' '), col('CONTENT')))
+        sdf_preprocessed = sdf_preprocessed.withColumn('REVIEW', concat(col('TITLE'), lit('. '), col('CONTENT')))
 
         # 4 - Drop rows with empty 'REVIEW' column
         sdf_preprocessed = sdf_preprocessed.filter(col('REVIEW') != 'NaN NaN')
@@ -261,7 +257,7 @@ class NlpPipeline:
         else:
             ssl._create_default_https_context = _create_unverified_https_context
 
-        nltk.download(quiet=True)
+        # nltk.download(quiet=True)
         wn = nltk.WordNetLemmatizer()
         stopwords = nltk.corpus.stopwords.words('english')
 
@@ -424,7 +420,6 @@ class NlpPipeline:
 
     def keyword_extraction(self):
 
-
         if not self.sentiment_done:
             raise ValueError("Sentiment Analysis has not been done yet.")
         df = self.df
@@ -441,6 +436,7 @@ class NlpPipeline:
             para_list.extend(paragraphs)
             return para_list
 
+
         df['PARAGRAPHS'] = df['REVIEW_P'].apply(lambda x: separate_paragraphs(x))
         df = df.drop(columns=['REVIEW_P'])
 
@@ -449,79 +445,206 @@ class NlpPipeline:
         # explode the PARAGRAPHS Column
         df = df.explode('PARAGRAPHS')
         df = df.reset_index(drop=True)
-        # remove empty rows from PARAGRAPHS
-        df = df[df['PARAGRAPHS'] != '']
-        df.insert(1, 'P_ID', range(0 + len(df)))
+
+        def separate_sentences(review):
+            sent_list = []
+            sentences = review.split('.')
+            sent_list.extend(sentences)
+            return sent_list
+
+        df['SENTENCES'] = df['PARAGRAPHS'].apply(lambda x: separate_sentences(x))
+        df = df.explode('SENTENCES')
+        # df = df.reset_index(drop=True)
+        print(df)
+
+        # Drop df columns: PARAGRAPHS
+        df = df.drop(columns=['PARAGRAPHS'])
+        df = df[df['SENTENCES'] != '']
+        # give id for each sentence in front of the sentence
+        df.insert(1, 'SENT_ID', range(0 + len(df)))
         self.df = df
-        df_paragraphs = df[['P_ID', 'PARAGRAPHS']]
+        df_sentences = df[['SENT_ID', 'SENTENCES']]
         res = {}
-        for i, row in tqdm(df_paragraphs.iterrows(), total=len(df_paragraphs)):
+        for i, row in tqdm(df_sentences.iterrows(), total=len(df_sentences)):
             try:
-                text = row['PARAGRAPHS']
-                myid = row['P_ID']
+                text = row['SENTENCES']
+                myid = row['SENT_ID']
                 # vader_results = sia.polarity_scores(text)
                 roberta_result = polarity_scores_roberta(text)
                 print(roberta_result)
-                roberta_result = {k + '_P': v for k, v in roberta_result.items()}
+                roberta_result = {k + '_SENT': v for k, v in roberta_result.items()}
                 print(roberta_result)
                 res[myid] = {**roberta_result}
 
             except RuntimeError:
                 print(f'Broke for id {myid}')
         print(res)
-        df_para_sentiment = pd.DataFrame(res).T
-        df_para_sentiment = df_para_sentiment.reset_index().rename(columns={'index': 'P_ID'})
-        df_keywords = self.df.merge(df_para_sentiment, how='left', on='P_ID')
+        setiment_scores = pd.DataFrame(res).T
+        setiment_scores = setiment_scores.reset_index().rename(columns={'index': 'SENT_ID'})
+        df_sentences = df_sentences.merge(setiment_scores, how='left', on='SENT_ID')
+        # df = df.merge(df_para_sentiment, how='left', on='SENT_ID')
 
 
-        for i in range(0, len(df_keywords['PARAGRAPHS'])):
-            df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].translate(
-                str.maketrans('', '', string.punctuation))
-            df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].replace('\n', '. ')
-            df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].lower()
-            for j in re.findall('"([^"]*)"', df_keywords['PARAGRAPHS'][i]):
-                df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].replace('"{}"'.format(j),
-                                                                                    j.replace(' ', '_'))
-        df_keywords['KEYWORD'] = df_keywords['PARAGRAPHS'].apply(lambda x: word_tokenize(x))
-        english_stopwords = stopwords.words('english')
-        for i in range(0, len(df_keywords['KEYWORD'])):
-            df_keywords['KEYWORD'][i] = [w for w in df_keywords['KEYWORD'][i] if w.lower() not in english_stopwords]
-
-        # remove duplicate df_keywords['KEYWORD']
-        df_keywords['KEYWORD'] = df_keywords['KEYWORD'].apply(lambda x: list(dict.fromkeys(x)))
+        # for i in range(0, len(df_keywords['PARAGRAPHS'])):
+        #     df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].translate(
+        #         str.maketrans('', '', string.punctuation))
+        #     df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].replace('\n', '. ')
+        #     df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].lower()
+        #     for j in re.findall('"([^"]*)"', df_keywords['PARAGRAPHS'][i]):
+        #         df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].replace('"{}"'.format(j),
+        #                                                                             j.replace(' ', '_'))
+        # df_keywords['KEYWORD'] = df_keywords['PARAGRAPHS'].apply(lambda x: word_tokenize(x))
+        # english_stopwords = stopwords.words('english')
+        # for i in range(0, len(df_keywords['KEYWORD'])):
+        #     df_keywords['KEYWORD'][i] = [w for w in df_keywords['KEYWORD'][i] if w.lower() not in english_stopwords]
+        #
+        # # remove duplicate df_keywords['KEYWORD']
+        # df_keywords['KEYWORD'] = df_keywords['KEYWORD'].apply(lambda x: list(dict.fromkeys(x)))
 
 
         r = Rake(include_repeated_phrases=False,
                  min_length=2,
                  ranking_metric=Metric.WORD_DEGREE)
-        keywords = []
-        for i in range(0, len(df_keywords['PARAGRAPHS'])):
-            keyword = r.extract_keywords_from_text(df_keywords['PARAGRAPHS'][i])
+        keywords_rake_2 = []
+        for i in range(0, len(df_sentences['SENTENCES'])):
+            keyword = r.extract_keywords_from_text(df_sentences['SENTENCES'][i])
             keyword = r.get_ranked_phrases()
-            keywords.append(keyword)
-        df_keywords['KEYWORDS'] = keywords
+            keywords_rake_2.append(keyword)
+        df_sentences['KEYWORDS_RAKE(2)'] = keywords_rake_2
 
         extractor = YAKE()
-        keywords_yake_n_1 = []
-        keywords_yake_n_2 = []
-        keywords_yake_th = []
-        keywords_threshold_80 = []
+        keywords_yake = []
+        keywords_yake_all = []
 
 
 
+        language = "en"
+        max_ngram_size = 2
+        deduplication_threshold = 0.9
+        deduplication_algo = 'seqm'
+        windowSize = 1
+        numOfKeywords = 5
+
+        # if length of df_sentences is greater than 10
+
+        df_sentences['word_count'] = df_sentences['SENTENCES'].apply(lambda x: len(x.split()))
+
+
+        for i in range(0, len(df_sentences['SENTENCES'])):
+
+            if df_sentences['word_count'][i] < 10:
+                max_ngram_size = 2
+                deduplication_threshold = 0.8
+                deduplication_algo = 'seqm'
+                windowSize = 1
+                numOfKeywords = 2
+
+                keywords = yake.KeywordExtractor(lan=language,n=max_ngram_size,
+                                                        dedupLim=deduplication_threshold,
+                                                        dedupFunc=deduplication_algo, windowsSize=windowSize,
+                                                        top=numOfKeywords, features=None).extract_keywords(df_sentences['SENTENCES'][i])
+
+                keywords = [i[0] for i in keywords]
+                keywords_yake.append(keywords)
+                keywords = yake.KeywordExtractor(lan=language, n=max_ngram_size,
+                                                 dedupLim=deduplication_threshold,
+                                                 dedupFunc=deduplication_algo, windowsSize=windowSize,
+                                                 top=numOfKeywords, features=None).extract_keywords(df_sentences['SENTENCES'][i])
+
+                keywords_yake_all.append(keywords)
+
+            elif df_sentences['word_count'][i] < 20:
+                max_ngram_size = 2
+                deduplication_threshold = 0.9
+                deduplication_algo = 'seqm'
+                windowSize = 1
+                numOfKeywords = 2
+
+                keywords = yake.KeywordExtractor(lan=language, n=max_ngram_size,
+                                                 dedupLim=deduplication_threshold,
+                                                 dedupFunc=deduplication_algo, windowsSize=windowSize,
+                                                 top=numOfKeywords, features=None).extract_keywords(
+                    df_sentences['SENTENCES'][i])
+
+                keywords = [i[0] for i in keywords]
+                keywords_yake.append(keywords)
+                keywords = yake.KeywordExtractor(lan=language, n=max_ngram_size,
+                                                 dedupLim=deduplication_threshold,
+                                                 dedupFunc=deduplication_algo, windowsSize=windowSize,
+                                                 top=numOfKeywords, features=None).extract_keywords(
+                    df_sentences['SENTENCES'][i])
+
+                keywords_yake_all.append(keywords)
+
+            else:
+                max_ngram_size = 2
+                deduplication_threshold = 0.9
+                deduplication_algo = 'seqm'
+                windowSize = 1
+                numOfKeywords = 3
+
+                keywords = yake.KeywordExtractor(lan=language, n=max_ngram_size,
+                                                 dedupLim=deduplication_threshold,
+                                                 dedupFunc=deduplication_algo, windowsSize=windowSize,
+                                                 top=numOfKeywords, features=None).extract_keywords(
+                    df_sentences['SENTENCES'][i])
+
+                keywords = [i[0] for i in keywords]
+                keywords_yake.append(keywords)
+                keywords = yake.KeywordExtractor(lan=language, n=max_ngram_size,
+                                                 dedupLim=deduplication_threshold,
+                                                 dedupFunc=deduplication_algo, windowsSize=windowSize,
+                                                 top=numOfKeywords, features=None).extract_keywords(
+                    df_sentences['SENTENCES'][i])
+
+                keywords_yake_all.append(keywords)
+
+        df_sentences['KEYWORDS_YAKE'] = keywords_yake
+        df_sentences['KEYWORDS_YAKE_SCOR'] = keywords_yake_all
+
+
+        df_sentences.to_excel('df__sent_keywords.xlsx')
+        self.df = df.merge(df_sentences, on='SENT_ID', how='left')
+
+
+        return self
+
+    def highlight_keywords(self):
+        df = self.df
+
+        css_style = """<head>
+    <style>
+        .highlight {
+            background-color: yellow;
+            font-weight: bold;
+        }
+    </style>
+</head>"""
+
+        df['REVIEW_HIGHLIGHTED'] = css_style + '<body>' + df['REVIEW'] + '</body>'
+
+
+        th = TextHighlighter(max_ngram_size=3, highlight_pre="<span class='highlight' >", highlight_post="</span>")
+
+
+        for i in range(0, len(df['KEYWORDS_YAKE_SCOR'])):
+            keywords = df['KEYWORDS_YAKE_SCOR'][i]
+            df['REVIEW_HIGHLIGHTED'][i] = th.highlight(df['REVIEW_HIGHLIGHTED'][i], keywords)
+
+
+        html_content = df.to_html(escape=False)
+        # write html to file
+        with open('df_highlighted.html', 'w') as f:
+            f.write(html_content)
+        df.to_excel('df_highlighted.xlsx')
+        self.df = df
+        return self
         # highlight all keywords in the text
 
         # th = TextHighlighter(max_ngram_size=3)
         # th = TextHighlighter(max_ngram_size=3, highlight_pre="<span class='highlight' >", highlight_post="</span>")
         #
-        # css_style = """
-        #           <style>
-        #           .highlight {
-        #               background-color: yellow;
-        #               font-weight: bold;
-        #           }
-        #           </style>
-        #           """
+        #
         # df_keywords['PARAGRAHS_HIGHLIGHTED'] = css_style + '<body>'
         # print(df_keywords['PARAGRAHS_HIGHLIGHTED'])
         # for i in range(0, len(df_keywords['PARAGRAPHS'])):
@@ -540,61 +663,36 @@ class NlpPipeline:
 
 
 
-        language = "en"
-        max_ngram_size = 3
-        deduplication_threshold = 0.9
-        deduplication_algo = 'seqm'
-        windowSize = 1
-        numOfKeywords = 5
 
-        kw_extractor = yake.KeywordExtractor(lan=language, n=max_ngram_size,
-                                                    dedupLim=deduplication_threshold,
-                                                    dedupFunc=deduplication_algo, windowsSize=windowSize,
-                                                    top=numOfKeywords, features=None)
-
-        th = TextHighlighter(max_ngram_size=3, highlight_pre="<span class='highlight' >", highlight_post="</span>")
-        df_keywords['HIGHLIGHTED'] = ''
-        css_style = """
-                <style>
-                .highlight {
-                    background-color: yellow;
-                    font-weight: bold;
-                }
-                </style>
-                """
-        htmlcontent = css_style + "<body>"
-        for x in range(0, len(df_keywords['PARAGRAPHS'])):
-            keywords = kw_extractor.extract_keywords(df_keywords['PARAGRAPHS'][x])
-            keywords = [i for i in keywords]
-            print(keywords)
-            keywords_yake_n_1.append(keywords)
-            # flattened_keywords = [item for sublist in keywords for item in sublist]
-            th.highlight(df_keywords['PARAGRAPHS'][x], keywords)
-            df_keywords['HIGHLIGHTED'][x] = htmlcontent + df_keywords['PARAGRAPHS'][x] + '</body>'
-            print(df_keywords['HIGHLIGHTED'][x])
+        # th = TextHighlighter(max_ngram_size=3, highlight_pre="<span class='highlight' >", highlight_post="</span>")
+        # df_keywords['HIGHLIGHTED'] = ''
+        # css_style = """
+        #         <style>
+        #         .highlight {
+        #             background-color: yellow;
+        #             font-weight: bold;
+        #         }
+        #         </style>
+        #         """
+        # htmlcontent = css_style + "<body>"
+        # for x in range(0, len(df_keywords['PARAGRAPHS'])):
+        #     keywords = kw_extractor.extract_keywords(df_keywords['PARAGRAPHS'][x])
+        #     keywords = [i for i in keywords]
+        #     print(keywords)
+        #     keywords_yake_n_1.append(keywords)
+        #     # flattened_keywords = [item for sublist in keywords for item in sublist]
+        #     th.highlight(df_keywords['PARAGRAPHS'][x], keywords)
+        #     df_keywords['HIGHLIGHTED'][x] = htmlcontent + df_keywords['PARAGRAPHS'][x] + '</body>'
+        #     print(df_keywords['HIGHLIGHTED'][x])
+        #
+        #
+        # with open('test.html', 'w') as f:
+        #     f.write(df_keywords)
+        #
+        #
+        # self.df = df_keywords
 
 
-        with open('test.html', 'w') as f:
-            f.write(df_keywords)
-
-
-
-        # Apply YAKE extraction to create a new column 'KEYWORDS_YAKE'
-        # df_keywords['KEYWORDS_YAKE'] = df_keywords['PARAGRAPHS'].apply(extract_yake_keywords)
-
-
-        # df_keywords['PARAGRAHS'] = th.highlight(df_keywords['PARAGRAPHS'], keywords_yake_n_1)
-
-
-        # Define CSS style
-
-
-
-
-        self.df = df_keywords
-
-
-        return self
 
     # def yake_keywords(self):
 
@@ -625,11 +723,11 @@ if __name__ == "__main__":
    # export_instance.to_excel()
 
    # Read the input Excel file
-   df_reviews = pd.read_excel('./RetailsReviews.xlsx')
+   df_reviews = pd.read_excel('./RetailsReviews_2.xlsx')
 
    # Create an instance of the NlpPipeline class and preprocess the data
    nlp_pipeline = NlpPipeline(df_reviews)
-   a = nlp_pipeline.preprocess().process_words().sentiment_analysis().keyword_extraction()
+   a = nlp_pipeline.preprocess().process_words().sentiment_analysis().keyword_extraction().highlight_keywords()
    # get self.df from the NlpPipeline class
 
 
