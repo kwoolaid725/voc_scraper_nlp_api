@@ -2,14 +2,12 @@ import pandas as pd
 import numpy as np
 
 from scraper import AmazonScraper, BestBuyScraper, HomeDepotScraper
-
 from datetime import date
+import ssl
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, regexp_replace, udf, lit
-from pyspark.sql.types import StringType, ArrayType
-
-import ssl
+from pyspark.sql.functions import col, regexp_replace
+from pyspark.sql.functions import filter, col, first, round, concat, lit, when, to_date, trim
 
 import nltk
 from nltk.util import ngrams
@@ -19,7 +17,8 @@ from rake_nltk import Metric, Rake
 import re
 import string
 
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+# from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, BitsAndBytesConfig, AutoModelForCausalLM
 from scipy.special import softmax
 from tqdm.notebook import tqdm
 import seaborn as sns
@@ -37,15 +36,14 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-
-
-
+nltk.download('wordnet')
 
 
 today = date.today()
 
 
-model_name = f'cardiffnlp/twitter-roberta-base-sentiment'
+# model_name = f'cardiffnlp/twitter-roberta-base-sentiment'
+model_name = f'cardiffnlp/twitter-xlm-roberta-base-sentiment'
 model = AutoModelForSequenceClassification.from_pretrained(model_name)
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 def polarity_scores_roberta(review):
@@ -169,13 +167,13 @@ class NlpPipeline:
         # group by retail from list_of_inputs
         self.df_reviews = df_reviews
         self.df = pd.DataFrame()
+        self.df_html = pd.DataFrame()
         self.preprocessed = False
         self.tokenized = False
         self.sentiment_done = False
+
     def preprocess(self):
-        from pyspark.sql import SparkSession
-        from pyspark.sql.functions import col, regexp_replace
-        from pyspark.sql.functions import filter, col, first, round, concat, lit, when, to_date
+
 
         spark = SparkSession.builder.appName('NlpPipeline_preprocess').getOrCreate()
         sdf_preprocessed = spark.createDataFrame(self.df_reviews)
@@ -195,18 +193,17 @@ class NlpPipeline:
         print(f"Number of dropped duplicates: {dropped_count}")
 
         # 3 - Combine title and content columns
-        sdf_preprocessed = sdf_preprocessed.withColumn('REVIEW', concat(col('TITLE'), lit('. '), col('CONTENT')))
-
-        # 4 - Drop rows with empty 'REVIEW' column
-        sdf_preprocessed = sdf_preprocessed.filter(col('REVIEW') != 'NaN NaN')
         print(f"Previous count: {new_count}")
+        sdf_filtered = sdf_preprocessed.filter(trim(col('CONTENT')) != 'NaN')
+        sdf_preprocessed = sdf_filtered.withColumn('REVIEW', concat(col('TITLE'), lit('. '), col('CONTENT')))
+
         new_count = sdf_preprocessed.count()
         print(f"New count after drooping empty reviews: {new_count}")
-        sdf_preprocessed = sdf_preprocessed.withColumn('REVIEW', regexp_replace('REVIEW', 'NaN' , ''))
+        sdf_preprocessed = sdf_preprocessed.withColumn('REVIEW', regexp_replace('REVIEW', 'NaN', ''))
 
 
         """ 
-                5 - 'POST_DATE' column contains different formats from each retailer
+                4 - 'POST_DATE' column contains different formats from each retailer
                 Converting them to 'yyyy-MM-dd' format
 
                 POST_DATE formats
@@ -247,7 +244,7 @@ class NlpPipeline:
         if not self.preprocessed:
             raise ValueError("Preprocessing has not been done yet.")
 
-        df = self.df.drop(columns=['CONTENT'])
+        df = self.df
         df.insert(0, 'ID', range(0, len(df)))
 
         try:
@@ -284,6 +281,10 @@ class NlpPipeline:
             return [' '.join(grams) for grams in n_grams]
 
         df['NGRAM2'] = df['REVIEW_CLEAN'].apply(lambda x: extract_ngrams(x, 2))
+
+        df['LEMMATIZED_S'] = [', '.join(map(str, l)) for l in df['LEMMATIZED']]
+        df['NGRAM2_S'] = [', '.join(map(str, l)) for l in df['NGRAM2']]
+
         self.df = df
         self.tokenized = True
         return self
@@ -325,10 +326,8 @@ class NlpPipeline:
             raise ValueError("Sentiment Analysis has not been done yet.")
         df = self.df
         df['POSITIVITY'] = np.where((df['RATING'] >= 4) & (df['POS'] > 0.5), 1, 0)
-        df['POSITIVITY'] = np.where((df['RATING'] <= 2) & (df['NEG'] > 0.5), -1,
-                                              df['POSITIVITY'])
-        df['LEMMATIZED_S'] = [', '.join(map(str, l)) for l in df['LEMMATIZED']]
-        df['NGRAM2_S'] = [', '.join(map(str, l)) for l in df['NGRAM2']]
+        df['POSITIVITY'] = np.where((df['RATING'] <= 2) & (df['NEG'] > 0.5), -1, df['POSITIVITY'])
+
 
         d = df.groupby(df['POSITIVITY']).agg({'LEMMATIZED_S': lambda x: ', '.join(x),
                                                                   'NGRAM2_S': lambda x: ', '.join(x)})
@@ -446,16 +445,35 @@ class NlpPipeline:
         df = df.explode('PARAGRAPHS')
         df = df.reset_index(drop=True)
 
+        for i in range(0, len(df['PARAGRAPHS'])):
+            df['PARAGRAPHS'][i] = df['PARAGRAPHS'][i].translate(
+                str.maketrans('', '', string.punctuation))
+            df['PARAGRAPHS'][i] = df['PARAGRAPHS'][i].replace('\n', '. ')
+            df['PARAGRAPHS'][i] = df['PARAGRAPHS'][i].lower()
+            for j in re.findall('"([^"]*)"', df['PARAGRAPHS'][i]):
+                df['PARAGRAPHS'][i] = df['PARAGRAPHS'][i].replace('"{}"'.format(j), j.replace(' ', '_'))
+
+        df['KEYWORD'] = df['PARAGRAPHS'].apply(lambda x: word_tokenize(x))
+        english_stopwords = stopwords.words('english')
+        for i in range(0, len(df['KEYWORD'])):
+            df['KEYWORD'][i] = [w for w in df['KEYWORD'][i] if w.lower() not in english_stopwords]
+
+        #
         def separate_sentences(review):
             sent_list = []
+            review = review.replace("but", ". but")
+            review = review.replace("however", ". however")
+            review = review.replace("although", ". although")
+            review = review.replace("yet", ". yet")
             sentences = review.split('.')
+
             sent_list.extend(sentences)
             return sent_list
 
         df['SENTENCES'] = df['PARAGRAPHS'].apply(lambda x: separate_sentences(x))
         df = df.explode('SENTENCES')
         # df = df.reset_index(drop=True)
-        print(df)
+        print(df.head())
 
         # Drop df columns: PARAGRAPHS
         df = df.drop(columns=['PARAGRAPHS'])
@@ -485,34 +503,23 @@ class NlpPipeline:
         # df = df.merge(df_para_sentiment, how='left', on='SENT_ID')
 
 
-        # for i in range(0, len(df_keywords['PARAGRAPHS'])):
-        #     df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].translate(
-        #         str.maketrans('', '', string.punctuation))
-        #     df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].replace('\n', '. ')
-        #     df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].lower()
-        #     for j in re.findall('"([^"]*)"', df_keywords['PARAGRAPHS'][i]):
-        #         df_keywords['PARAGRAPHS'][i] = df_keywords['PARAGRAPHS'][i].replace('"{}"'.format(j),
-        #                                                                             j.replace(' ', '_'))
-        # df_keywords['KEYWORD'] = df_keywords['PARAGRAPHS'].apply(lambda x: word_tokenize(x))
-        # english_stopwords = stopwords.words('english')
-        # for i in range(0, len(df_keywords['KEYWORD'])):
-        #     df_keywords['KEYWORD'][i] = [w for w in df_keywords['KEYWORD'][i] if w.lower() not in english_stopwords]
-        #
+
         # # remove duplicate df_keywords['KEYWORD']
         # df_keywords['KEYWORD'] = df_keywords['KEYWORD'].apply(lambda x: list(dict.fromkeys(x)))
 
 
-        r = Rake(include_repeated_phrases=False,
-                 min_length=2,
-                 ranking_metric=Metric.WORD_DEGREE)
-        keywords_rake_2 = []
-        for i in range(0, len(df_sentences['SENTENCES'])):
-            keyword = r.extract_keywords_from_text(df_sentences['SENTENCES'][i])
-            keyword = r.get_ranked_phrases()
-            keywords_rake_2.append(keyword)
-        df_sentences['KEYWORDS_RAKE(2)'] = keywords_rake_2
+        # r = Rake(include_repeated_phrases=False,
+        #          min_length=2,
+        #          ranking_metric=Metric.WORD_DEGREE)
+        # keywords_rake_2 = []
+        # for i in range(0, len(df_sentences['SENTENCES'])):
+        #     keyword = r.extract_keywords_from_text(df_sentences['SENTENCES'][i])
+        #     keyword = r.get_ranked_phrases()
+        #     keywords_rake_2.append(keyword)
+        # df_sentences['KEYWORDS_RAKE(2)'] = keywords_rake_2
 
-        extractor = YAKE()
+        # extractor = YAKE()
+
         keywords_yake = []
         keywords_yake_all = []
 
@@ -527,14 +534,14 @@ class NlpPipeline:
 
         # if length of df_sentences is greater than 10
 
-        df_sentences['word_count'] = df_sentences['SENTENCES'].apply(lambda x: len(x.split()))
+        df_sentences['WORD_COUNT'] = df_sentences['SENTENCES'].apply(lambda x: len(x.split()))
 
 
         for i in range(0, len(df_sentences['SENTENCES'])):
 
-            if df_sentences['word_count'][i] < 10:
-                max_ngram_size = 2
-                deduplication_threshold = 0.8
+            if df_sentences['WORD_COUNT'][i] < 7:
+                max_ngram_size = 1
+                deduplication_threshold = 0.9
                 deduplication_algo = 'seqm'
                 windowSize = 1
                 numOfKeywords = 2
@@ -553,7 +560,8 @@ class NlpPipeline:
 
                 keywords_yake_all.append(keywords)
 
-            elif df_sentences['word_count'][i] < 20:
+
+            elif df_sentences['WORD_COUNT'][i] < 20:
                 max_ngram_size = 2
                 deduplication_threshold = 0.9
                 deduplication_algo = 'seqm'
@@ -603,45 +611,92 @@ class NlpPipeline:
         df_sentences['KEYWORDS_YAKE_SCOR'] = keywords_yake_all
 
 
-        df_sentences.to_excel('df__sent_keywords.xlsx')
-        self.df = df.merge(df_sentences, on='SENT_ID', how='left')
+
+        self.df_html = df_sentences
+
+        df = df.merge(df_sentences, on='SENT_ID', how='left', suffixes=('', '_y'))
+        df.drop(df.filter(regex='_y$').columns, axis=1, inplace=True)
+        self.df = df
 
 
         return self
 
     def highlight_keywords(self):
 
-        df = self.df
+        df = self.df_html
 
         css_style = """<head>
     <style>
-        .highlight {
+        .positive {
+            background-color: #66FF99;
+            font-weight: bold;
+        }
+         .negative {
+            background-color: #fd5c63;
+            font-weight: bold;
+        }
+         .neutral {
             background-color: yellow;
             font-weight: bold;
         }
     </style>
 </head>"""
 
-        df['REVIEW_HIGHLIGHTED'] = css_style + '<body>' + df['REVIEW'] + '</body>'
+
+        df['REVIEW_HIGHLIGHTED'] = css_style + '<body>' + df['SENTENCES'] + ' </body>'
+        # df['REVIEW_HIGHLIGHTED'] = ''
+
+        # css_style = """<head>
+        #     <style> .positive {background-color: #66FF99; font-weight: bold; }</style>
+        #          .negative { background-color: #ff6347; font-weight: bold;
+        #         }
+        #          .neutral {
+        #             background-color: yellow;
+        #             font-weight: bold;
+        #         }
+        #     </style>
+        # </head>"""
 
 
-        th = TextHighlighter(max_ngram_size=3, highlight_pre="<span class='highlight' >", highlight_post="</span>")
-
+        th_pos = TextHighlighter(max_ngram_size=2, highlight_pre="<span class='positive' >", highlight_post="</span>")
+        th_neg = TextHighlighter(max_ngram_size=2, highlight_pre="<span class='negative' >", highlight_post="</span>")
+        th_neu = TextHighlighter(max_ngram_size=2, highlight_pre="<span class='neutral' >", highlight_post="</span>")
 
         for i in range(0, len(df['KEYWORDS_YAKE_SCOR'])):
-            keywords = df['KEYWORDS_YAKE_SCOR'][i]
-            df['REVIEW_HIGHLIGHTED'][i] = th.highlight(df['REVIEW_HIGHLIGHTED'][i], keywords)
+            if df['POS_SENT'][i] > 0.7:
+                keywords = df['KEYWORDS_YAKE_SCOR'][i]
+                df['REVIEW_HIGHLIGHTED'][i] = th_pos.highlight(df['REVIEW_HIGHLIGHTED'][i], keywords)
+            elif df['NEG_SENT'][i] > 0.3:
+                keywords = df['KEYWORDS_YAKE_SCOR'][i]
+                df['REVIEW_HIGHLIGHTED'][i] = th_neg.highlight(df['REVIEW_HIGHLIGHTED'][i], keywords)
+            elif df['NEU_SENT'][i] > 0.3:
+                keywords = df['KEYWORDS_YAKE_SCOR'][i]
+                df['REVIEW_HIGHLIGHTED'][i] = th_neu.highlight(df['REVIEW_HIGHLIGHTED'][i], keywords)
+            else:
+                pass
+
+        df = df.drop(columns=['KEYWORDS_YAKE_SCOR', 'WORD_COUNT'])
 
 
-        html_content = df.to_html(escape=False)
+        df_all = self.df[['ID', 'RETAILER', 'PRODUCT', 'POST_DATE', 'REVIEWER_NAME', 'RATING', 'TITLE','CONTENT','LEMMATIZED_S', 'NEG','NEU','POS', 'SENT_ID']]
+
+        df_merged = df_all.merge(df, on='SENT_ID', how='left', suffixes=('', '_y'))
+
+        # group by ID and concatenate the highlighted sentences
+        df_merged = df_merged.groupby(['ID', 'RETAILER', 'PRODUCT', 'POST_DATE', 'REVIEWER_NAME', 'TITLE', 'CONTENT', 'RATING', 'POS','NEG', 'LEMMATIZED_S'])['REVIEW_HIGHLIGHTED'].apply(' '.join).reset_index()
+
+        html_content = df_merged.to_html(escape=False)
+
         # write html to file
-        with open('df_highlighted.html', 'w') as f:
+        with open('df_highlighted_final.html', 'w', encoding="utf-8") as f:
             f.write(html_content)
-        df.to_excel('df_highlighted.xlsx')
+        df.to_excel('df_highlighted_final.xlsx')
         self.df = df
+
+
         return self
         # highlight all keywords in the text
-
+0
         # th = TextHighlighter(max_ngram_size=3)
         # th = TextHighlighter(max_ngram_size=3, highlight_pre="<span class='highlight' >", highlight_post="</span>")
         #
@@ -724,7 +779,7 @@ if __name__ == "__main__":
    # export_instance.to_excel()
 
    # Read the input Excel file
-   df_reviews = pd.read_excel('./RetailsReviews_2.xlsx')
+   df_reviews = pd.read_excel('./RetailsReviews.xlsx')
 
    # Create an instance of the NlpPipeline class and preprocess the data
    nlp_pipeline = NlpPipeline(df_reviews)

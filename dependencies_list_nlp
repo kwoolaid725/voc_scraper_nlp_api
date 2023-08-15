@@ -1,0 +1,15 @@
+pip install rake-nltk
+pip install transformers
+pip install scipy
+pip install git+https://github.com/LIAAD/yake
+pip install -U scikit-learn
+
+https://pytorch.org/get-started/locally/
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117
+
+pip install git+https://github.com/boudinfl/pke.git (for YAKE, not yake)
+
+pip install sentencepiece # for fast token
+
+# XLMRobertaConverter requires the protobuf library but it was not found in your environment
+pip install protobuf
