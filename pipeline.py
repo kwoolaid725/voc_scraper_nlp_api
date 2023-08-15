@@ -610,6 +610,7 @@ class NlpPipeline:
         return self
 
     def highlight_keywords(self):
+
         df = self.df
 
         css_style = """<head>
