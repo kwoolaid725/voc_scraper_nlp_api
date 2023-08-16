@@ -284,6 +284,7 @@ class NlpPipeline:
 
         df['LEMMATIZED_S'] = [', '.join(map(str, l)) for l in df['LEMMATIZED']]
         df['NGRAM2_S'] = [', '.join(map(str, l)) for l in df['NGRAM2']]
+        df.drop(['LEMMATIZED', 'NGRAM2'], axis=1, inplace=True)
 
         self.df = df
         self.tokenized = True
@@ -426,7 +427,7 @@ class NlpPipeline:
 
         df['REVIEW_P'] = df['REVIEW'].apply(
             lambda x: x.replace(":   ", ":").replace(":  ", ":").replace(": ", ":").replace(":\n\n", ": ").
-            replace(":\n",": ").replace("\t", "").replace("\n-", "").replace("\n ", "\n").replace("NaN", ""))
+            replace(":\n",": ").replace("\t", "").replace("\n-", " ").replace("\n ", "\n").replace("NaN", ""))
 
         # Divide REVIEW into PARAGRAPHS
         def separate_paragraphs(review):
@@ -448,7 +449,7 @@ class NlpPipeline:
         for i in range(0, len(df['PARAGRAPHS'])):
             df['PARAGRAPHS'][i] = df['PARAGRAPHS'][i].translate(
                 str.maketrans('', '', string.punctuation))
-            df['PARAGRAPHS'][i] = df['PARAGRAPHS'][i].replace('\n', '. ')
+            df['PARAGRAPHS'][i] = df['PARAGRAPHS'][i].replace('\n', ', ')
             df['PARAGRAPHS'][i] = df['PARAGRAPHS'][i].lower()
             for j in re.findall('"([^"]*)"', df['PARAGRAPHS'][i]):
                 df['PARAGRAPHS'][i] = df['PARAGRAPHS'][i].replace('"{}"'.format(j), j.replace(' ', '_'))
@@ -479,7 +480,7 @@ class NlpPipeline:
         df = df.drop(columns=['PARAGRAPHS'])
         df = df[df['SENTENCES'] != '']
         # give id for each sentence in front of the sentence
-        df.insert(1, 'SENT_ID', range(0 + len(df)))
+        df.insert(0, 'SENT_ID', range(0 + len(df)))
         self.df = df
         df_sentences = df[['SENT_ID', 'SENTENCES']]
         res = {}
@@ -616,6 +617,8 @@ class NlpPipeline:
 
         df = df.merge(df_sentences, on='SENT_ID', how='left', suffixes=('', '_y'))
         df.drop(df.filter(regex='_y$').columns, axis=1, inplace=True)
+
+        df.to_excel('output.xlsx', index=False)
         self.df = df
 
 
@@ -685,72 +688,17 @@ class NlpPipeline:
         # group by ID and concatenate the highlighted sentences
         df_merged = df_merged.groupby(['ID', 'RETAILER', 'PRODUCT', 'POST_DATE', 'REVIEWER_NAME', 'TITLE', 'CONTENT', 'RATING', 'POS','NEG', 'LEMMATIZED_S'])['REVIEW_HIGHLIGHTED'].apply(' '.join).reset_index()
 
-        html_content = df_merged.to_html(escape=False)
+
+        html_content = df_merged.to_html(escape=False, index=False)
 
         # write html to file
         with open('df_highlighted_final.html', 'w', encoding="utf-8") as f:
             f.write(html_content)
-        df.to_excel('df_highlighted_final.xlsx')
+        df.merged.to_excel('df_highlighted_final.xlsx', index=False)
         self.df = df
 
 
         return self
-        # highlight all keywords in the text
-0
-        # th = TextHighlighter(max_ngram_size=3)
-        # th = TextHighlighter(max_ngram_size=3, highlight_pre="<span class='highlight' >", highlight_post="</span>")
-        #
-        #
-        # df_keywords['PARAGRAHS_HIGHLIGHTED'] = css_style + '<body>'
-        # print(df_keywords['PARAGRAHS_HIGHLIGHTED'])
-        # for i in range(0, len(df_keywords['PARAGRAPHS'])):
-        #     keywords = custom_kw_extractor.extract_keywords(df_keywords['PARAGRAPHS'][i])
-        #     df_keywords['PARAGRAHS_HIGHLIGHTED'][i] = df_keywords['PARAGRAHS_HIGHLIGHTED'][i] + \
-        #                                               th.highlight(df_keywords['PARAGRAPHS'][i], keywords) + '</body>'
-        #
-        #     keywords = [i[0] for i in keywords]
-        #     keywords_yake_n_2.append(keywords)
-
-        # Define YAKE keyword extraction function
-
-
-        # Define YAKE keyword extraction function
-
-
-
-
-
-        # th = TextHighlighter(max_ngram_size=3, highlight_pre="<span class='highlight' >", highlight_post="</span>")
-        # df_keywords['HIGHLIGHTED'] = ''
-        # css_style = """
-        #         <style>
-        #         .highlight {
-        #             background-color: yellow;
-        #             font-weight: bold;
-        #         }
-        #         </style>
-        #         """
-        # htmlcontent = css_style + "<body>"
-        # for x in range(0, len(df_keywords['PARAGRAPHS'])):
-        #     keywords = kw_extractor.extract_keywords(df_keywords['PARAGRAPHS'][x])
-        #     keywords = [i for i in keywords]
-        #     print(keywords)
-        #     keywords_yake_n_1.append(keywords)
-        #     # flattened_keywords = [item for sublist in keywords for item in sublist]
-        #     th.highlight(df_keywords['PARAGRAPHS'][x], keywords)
-        #     df_keywords['HIGHLIGHTED'][x] = htmlcontent + df_keywords['PARAGRAPHS'][x] + '</body>'
-        #     print(df_keywords['HIGHLIGHTED'][x])
-        #
-        #
-        # with open('test.html', 'w') as f:
-        #     f.write(df_keywords)
-        #
-        #
-        # self.df = df_keywords
-
-
-
-    # def yake_keywords(self):
 
 
 class Export:
