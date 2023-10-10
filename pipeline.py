@@ -282,9 +282,9 @@ class NlpPipeline:
 
         df['NGRAM2'] = df['REVIEW_CLEAN'].apply(lambda x: extract_ngrams(x, 2))
 
-        df['LEMMATIZED_S'] = [', '.join(map(str, l)) for l in df['LEMMATIZED']]
-        df['NGRAM2_S'] = [', '.join(map(str, l)) for l in df['NGRAM2']]
-        df.drop(['LEMMATIZED', 'NGRAM2'], axis=1, inplace=True)
+        df['LEMMATIZED'] = [', '.join(map(str, l)) for l in df['LEMMATIZED']]
+        df['NGRAM2'] = [', '.join(map(str, l)) for l in df['NGRAM2']]
+        # df.drop(['LEMMATIZED', 'NGRAM2'], axis=1, inplace=True)
 
         self.df = df
         self.tokenized = True
@@ -681,12 +681,12 @@ class NlpPipeline:
         df = df.drop(columns=['KEYWORDS_YAKE_SCOR', 'WORD_COUNT'])
 
 
-        df_all = self.df[['ID', 'RETAILER', 'PRODUCT', 'POST_DATE', 'REVIEWER_NAME', 'RATING', 'TITLE','CONTENT','LEMMATIZED_S', 'NEG','NEU','POS', 'SENT_ID']]
+        df_all = self.df[['ID', 'RETAILER', 'PRODUCT', 'POST_DATE', 'REVIEWER_NAME', 'RATING', 'TITLE','CONTENT','LEMMATIZED', 'NEG','NEU','POS', 'SENT_ID']]
 
         df_merged = df_all.merge(df, on='SENT_ID', how='left', suffixes=('', '_y'))
 
         # group by ID and concatenate the highlighted sentences
-        df_merged = df_merged.groupby(['ID', 'RETAILER', 'PRODUCT', 'POST_DATE', 'REVIEWER_NAME', 'TITLE', 'CONTENT', 'RATING', 'POS','NEG', 'LEMMATIZED_S'])['REVIEW_HIGHLIGHTED'].apply(' '.join).reset_index()
+        df_merged = df_merged.groupby(['ID', 'RETAILER', 'PRODUCT', 'POST_DATE', 'REVIEWER_NAME', 'TITLE', 'CONTENT', 'RATING', 'POS','NEG', 'LEMMATIZED'])['REVIEW_HIGHLIGHTED'].apply(' '.join).reset_index()
 
 
         html_content = df_merged.to_html(escape=False, index=False)
@@ -694,7 +694,7 @@ class NlpPipeline:
         # write html to file
         with open('df_highlighted_final.html', 'w', encoding="utf-8") as f:
             f.write(html_content)
-        df.merged.to_excel('df_highlighted_final.xlsx', index=False)
+        df_merged.to_excel('df_highlighted_final.xlsx', index=False)
         self.df = df
 
 

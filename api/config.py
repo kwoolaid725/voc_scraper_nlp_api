@@ -1,4 +1,5 @@
-from pydantic import BaseSettings
+# from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 from pathlib import Path
 
 
@@ -13,7 +14,6 @@ class Settings(BaseSettings):
     # secret_key: str
     # algorithm: str
     # access_token_expire_minutes: int
-
 
     class Config:
         env_file = ".env"

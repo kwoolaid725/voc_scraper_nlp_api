@@ -7,10 +7,12 @@ from sqlalchemy.sql.expression import text
 
 
 retailer_item = Table('item_retailer', Base.metadata,
-        Column('retailer_id', ForeignKey('retailers.id'), primary_key=True),
-        Column('item_id', ForeignKey('items.id'), primary_key=True),
-        Column('url', String, nullable=False)
-                      )
+        Column('id', Integer, primary_key=True, nullable=False, index=True),
+        Column('retailer_id', ForeignKey('retailers.id'), nullable=False),
+        Column('item_id', ForeignKey('items.id'), nullable=False),
+        Column('url', String, nullable=False),
+        Column('last_modified', TIMESTAMP(timezone=True), nullable=False, server_default=text('now()')),
+        )
 
 class Item(Base):
     __tablename__ = 'items'
@@ -40,8 +42,8 @@ class Review(Base):
 
     sent_id = Column(Integer, nullable=False)
     id = Column(Integer, primary_key=True, nullable=False, index=True)
-    retailer = Column(String, ForeignKey('retailers.name'), nullable=False)
-    item = Column(String, ForeignKey('items.name'), nullable=False)
+    retailer = Column(Integer, ForeignKey('retailers.id'), nullable=False)
+    item = Column(Integer, ForeignKey('items.id'), nullable=False)
     rating = Column(Integer, nullable=False)
     post_date = Column(DateTime, nullable=False)
     reviewer_name = Column(String, nullable=False)
