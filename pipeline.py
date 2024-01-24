@@ -80,6 +80,8 @@ class UserInput:
 # merge dictionaries
 # append dictionaries to list
 list_of_inputs = []
+
+
 class GroupbyRetail(UserInput):
 
     def __init__(self, retail, product_name, url):
@@ -93,10 +95,10 @@ class GroupbyRetail(UserInput):
         list_of_inputs.append(self.passed_dict)
 
 
-# a = GroupbyRetail('amazon', 'LG A939KBGS', 'https://www.amazon.com/LG-CordZero-Cordless-Lightweight-Warranty/product-reviews/B0BZQT1235/ref=cm_cr_getr_d_paging_btm_next_10?ie=UTF8&reviewerType=all_reviews')()
-# b = GroupbyRetail('bestbuy', 'LG A939KBGS', 'https://www.bestbuy.com/site/reviews/lg-cordzero-cordless-stick-vacuum-with-auto-empty-and-kompressor-sand-beige/6483115?variant=A&page=1')()
+a = GroupbyRetail('bestbuy', 'LG A931KWM', 'https://www.bestbuy.com/site/reviews/lg-cordzero-all-in-one-cordless-stick-vacuum-with-dual-floor-max-nozzle-essence-white/6553205?variant=A&page=1')()
+# b = GroupbyRetail('bestbuy', 'Panasonic NN-SN77HS', 'https://www.bestbuy.com/site/reviews/panasonic-1-6-cu-ft-1250-watt-sn77hs-microwave-with-cyclonic-inverter-stainless-steel-silver/5834501?variant=A&page=1')()
 # # d = GroupbyRetail('homedepot', 'Dyson V10', 'https://www.homedepot.com/p/reviews/Dyson-V10-Animal-Cordless-Stick-Vacuum-394429-01/313126189/')()
-# c = GroupbyRetail('homedepot', 'LG A939KBGS', 'https://www.homedepot.com/p/reviews/LG-CordZero-All-in-One-Cordless-Stick-Vacuum-Cleaner-A939KBGS/319148737/')()
+# c = GroupbyRetail('bestbuy', 'Panasonic NN-SE785S', 'https://www.bestbuy.com/site/reviews/panasonic-1-6-cu-ft-built-in-countertop-cyclonic-wave-microwave-oven-with-inverter-technology-stainless-steel/6258025?variant=A&page=1')()
 #
 
 class RunScrapers:
@@ -302,8 +304,9 @@ class NlpPipeline:
                 roberta_result = polarity_scores_roberta(text)
                 res[myid] = {**roberta_result}
 
-            except RuntimeError:
-                print(f'Broke for id {myid}')
+            except RuntimeError as e:
+                print(f'Error for id {myid}: {e}')
+                # You can choose to handle the error gracefully or raise it again if needed
 
         print(res)
         df_scores = pd.DataFrame(res).T
@@ -326,20 +329,29 @@ class NlpPipeline:
         if not self.sentiment_done:
             raise ValueError("Sentiment Analysis has not been done yet.")
         df = self.df
+        print(df.head())
         df['POSITIVITY'] = np.where((df['RATING'] >= 4) & (df['POS'] > 0.5), 1, 0)
         df['POSITIVITY'] = np.where((df['RATING'] <= 2) & (df['NEG'] > 0.5), -1, df['POSITIVITY'])
 
 
-        d = df.groupby(df['POSITIVITY']).agg({'LEMMATIZED_S': lambda x: ', '.join(x),
-                                                                  'NGRAM2_S': lambda x: ', '.join(x)})
+        # d = df.groupby(df['POSITIVITY']).agg({'LEMMATIZED_S': lambda x: ', '.join(x),
+        #                                                           'NGRAM2_S': lambda x: ', '.join(x)})
+        #
+        # lem_pos = d['LEMMATIZED_S'][1]
+        # lem_neu = d['LEMMATIZED_S'][0]
+        # lem_neg = d['LEMMATIZED_S'][-1]
 
-        lem_pos = d['LEMMATIZED_S'][1]
-        lem_neu = d['LEMMATIZED_S'][0]
-        lem_neg = d['LEMMATIZED_S'][-1]
+        d = df.groupby(df['POSITIVITY']).agg({'LEMMATIZED': lambda x: ', '.join(x),
+                                              'NGRAM2': lambda x: ', '.join(x)})
+
+        lem_pos = d['LEMMATIZED'][1]
+        lem_neu = d['LEMMATIZED'][0]
+        lem_neg = d['LEMMATIZED'][-1]
 
         tags_pos = lem_pos.split(', ')  # Positivity [1]
         tags_neu = lem_neu.split(', ')  # Positivity [0]
         tags_neg = lem_neg.split(', ')  # Positivity [-1]
+
         res_pos = {}
         res_neu = {}
         res_neg = {}
@@ -358,10 +370,16 @@ class NlpPipeline:
         lemmatized_count.columns = ['POS(1)', 'NEU(0)', 'NEG(-1)']
         lemmatized_count = lemmatized_count.sort_values(by='POS(1)', ascending=False)
         lemmatized_count.name = 'Word Count by Sentiment'
+        #
+        # ngram2_pos = d['NGRAM2_S'][1]
+        # ngram2_neu = d['NGRAM2_S'][0]
+        # ngram2_neg = d['NGRAM2_S'][-1]
 
-        ngram2_pos = d['NGRAM2_S'][1]
-        ngram2_neu = d['NGRAM2_S'][0]
-        ngram2_neg = d['NGRAM2_S'][-1]
+        ngram2_pos = d['NGRAM2'][1]
+        ngram2_neu = d['NGRAM2'][0]
+        ngram2_neg = d['NGRAM2'][-1]
+
+        print(df.head())
 
         tags_bi_pos = ngram2_pos.split(', ')  # Positive Bi-gram
         tags_bi_neu = ngram2_neu.split(', ')  # Neutral Bi-gram
@@ -726,12 +744,13 @@ if __name__ == "__main__":
    # export_instance.to_json()
    # export_instance.to_excel()
 
-   # Read the input Excel file
-   df_reviews = pd.read_excel('./RetailsReviews.xlsx')
+   ''' Read the input Excel file '''
+   df_reviews = pd.read_excel('./RetailsReviews_2024-01-24.xlsx')
 
-   # Create an instance of the NlpPipeline class and preprocess the data
+   '''Create an instance of the NlpPipeline class and preprocess the data'''
    nlp_pipeline = NlpPipeline(df_reviews)
-   a = nlp_pipeline.preprocess().process_words().sentiment_analysis().keyword_extraction().highlight_keywords()
+   # a = nlp_pipeline.preprocess().process_words().sentiment_analysis().keyword_extraction().highlight_keywords()
+   a = nlp_pipeline.preprocess().process_words().sentiment_analysis().word_count()
    # get self.df from the NlpPipeline class
 
 
