@@ -1,11 +1,16 @@
 # voc_scraper_nlp_api
 
-## <--- Update in Progress ---> 
+
+
 
 ![image](https://github.com/kwoolaid725/voc_scraper_nlp_api/assets/107806433/d317d006-7014-4330-b416-0ead6b00c8dc)
 
 
+Click the link if you want to know about the project in more details:
+**[Medium Article](https://medium.com/@kwh0725/voice-of-the-customer-voc-web-scraping-and-nlp-pipeline-with-python-17fd72f82167)**
 
+
+-------------------------------------------------------------
 
 
 
