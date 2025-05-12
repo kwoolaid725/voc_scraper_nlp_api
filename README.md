@@ -1,8 +1,6 @@
 # voc_scraper_nlp_api
 
 
-
-
 ![image](https://github.com/kwoolaid725/voc_scraper_nlp_api/assets/107806433/d317d006-7014-4330-b416-0ead6b00c8dc)
 
 
@@ -11,6 +9,8 @@ Click the link if you want to know about the project in more details:
 
 
 -------------------------------------------------------------
+
+<img width="1033" alt="image" src="https://github.com/user-attachments/assets/b09d523b-aeda-4b47-aa7e-baf737cab029" />
 
 
 
